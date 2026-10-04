@@ -1,0 +1,120 @@
+import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 1. Create Synthetic Light-Level Dataset (Lux readings)
+# Features: Light levels in Lux
+X_train = np.array([
+    [5.0], [20.0], [50.0], [80.0],    # Dark: 0 (< 100 Lux)
+    [150.0], [300.0], [500.0], [700.0], # Normal: 1 (100 - 800 Lux)
+    [1000.0], [1500.0], [2000.0], [3000.0] # Bright: 2 (> 800 Lux)
+], dtype=np.float32)
+
+# Labels: 0 = Dark, 1 = Normal, 2 = Bright
+y_train = np.array([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2], dtype=np.int32)
+
+# 2. Build and Compile Keras Model
+keras_model = tf.keras.Sequential([
+    tf.keras.layers.Dense(units=8, activation='relu', input_shape=(1,)),
+    tf.keras.layers.Dense(units=8, activation='relu'),
+    tf.keras.layers.Dense(units=3, activation='softmax') # 3 Output Classes
+])
+
+keras_model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.01),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# 3. Train the Keras Model
+print("Training original Keras model...")
+keras_model.fit(X_train, y_train, epochs=350, verbose=0)
+print("Training complete!")
+
+# 4. Convert Keras Model to TensorFlow Lite (.tflite) Format
+converter = tf.lite.TFLiteConverter.from_keras_model(keras_model)
+tflite_model_buffer = converter.convert()
+
+# Save the .tflite file locally in Colab workspace
+tflite_filename = "light_classifier.tflite"
+with open(tflite_filename, "wb") as f:
+    f.write(tflite_model_buffer)
+
+print(f"Model successfully converted and saved as '{tflite_filename}'!")
+
+# 5. Load and Prepare TFLite Interpreter for Verification
+interpreter = tf.lite.Interpreter(model_path=tflite_filename)
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# 6. Run Inference Comparison on Test Values
+test_lux_values = np.array([[10.0], [450.0], [1800.0]], dtype=np.float32)
+class_labels = {0: 'Dark', 1: 'Normal', 2: 'Bright'}
+
+print("\n--- Model Output Comparison ---")
+for val in test_lux_values:
+    # A. Original Keras Model Inference
+    keras_pred = keras_model.predict(val.reshape(1, -1), verbose=0)
+    keras_class = class_labels[np.argmax(keras_pred)]
+
+    # B. TFLite Interpreter Inference
+    interpreter.set_tensor(input_details[0]['index'], val.reshape(1, -1))
+    interpreter.invoke()
+    tflite_pred = interpreter.get_tensor(output_details[0]['index'])
+    tflite_class = class_labels[np.argmax(tflite_pred)]
+
+    # Print comparison
+    print(f"Input Lux: {val[0]:6.1f} | Keras: {keras_class:<7} ({np.max(keras_pred)*100:.1f}%) | TFLite: {tflite_class:<7} ({np.max(tflite_pred)*100:.1f}%)")
+
+# 7. Visualization of Decision Ranges
+X_eval = np.linspace(0, 2500, 300).astype(np.float32).reshape(-1, 1)
+tflite_results = []
+
+for val in X_eval:
+    interpreter.set_tensor(input_details[0]['index'], val.reshape(1, -1))
+    interpreter.invoke()
+    output = interpreter.get_tensor(output_details[0]['index'])
+    tflite_results.append(np.argmax(output))
+
+plt.figure(figsize=(9, 4))
+plt.plot(X_eval, tflite_results, color='purple', linewidth=2, label='TFLite Predicted Class')
+plt.scatter(X_train, y_train, color='black', marker='X', s=70, label='Training Samples')
+plt.yticks([0, 1, 2], ['Dark (0)', 'Normal (1)', 'Bright (2)'])
+plt.xlabel('Light Level (Lux)')
+plt.ylabel('Category')
+plt.title('TFLite Model Classification Boundaries')
+plt.grid(True)
+plt.legend()
+plt.show()
+     
+/usr/local/lib/python3.13/dist-packages/keras/src/layers/core/dense.py:106: UserWarning: Do not pass an `input_shape`/`input_dim` argument to a layer. When using Sequential models, prefer using an `Input(shape)` object as the first layer in the model instead.
+  super().__init__(activity_regularizer=activity_regularizer, **kwargs)
+Training original Keras model...
+Training complete!
+Saved artifact at '/tmp/tmptt_2f7yh'. The following endpoints are available:
+
+* Endpoint 'serve'
+  args_0 (POSITIONAL_ONLY): TensorSpec(shape=(None, 1), dtype=tf.float32, name='keras_tensor')
+Output Type:
+  TensorSpec(shape=(None, 3), dtype=tf.float32, name=None)
+Captures:
+  137600132395280: TensorSpec(shape=(), dtype=tf.resource, name=None)
+  137600132396240: TensorSpec(shape=(), dtype=tf.resource, name=None)
+  137600132395856: TensorSpec(shape=(), dtype=tf.resource, name=None)
+  137600132396624: TensorSpec(shape=(), dtype=tf.resource, name=None)
+  137600132396432: TensorSpec(shape=(), dtype=tf.resource, name=None)
+  137600132397008: TensorSpec(shape=(), dtype=tf.resource, name=None)
+Model successfully converted and saved as 'light_classifier.tflite'!
+
+--- Model Output Comparison ---
+Input Lux:   10.0 | Keras: Dark    (84.6%) | TFLite: Dark    (84.6%)
+/usr/local/lib/python3.13/dist-packages/tensorflow/lite/python/interpreter.py:457: UserWarning:     Warning: tf.lite.Interpreter is deprecated and is scheduled for deletion in
+    TF 2.20. Please use the LiteRT interpreter from the ai_edge_litert package.
+    See the [migration guide](https://ai.google.dev/edge/litert/migration)
+    for details.
+    
+  warnings.warn(_INTERPRETER_DELETION_WARNING)
+Input Lux:  450.0 | Keras: Normal  (80.2%) | TFLite: Normal  (80.2%)
+Input Lux: 1800.0 | Keras: Bright  (98.0%) | TFLite: Bright  (98.0%)
